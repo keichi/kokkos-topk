@@ -4,7 +4,7 @@
 #include <Kokkos_Random.hpp>
 #include <iomanip>
 
-const unsigned int RADIX_BITS = 4;
+const unsigned int RADIX_BITS = 8;
 const unsigned int RADIX_SIZE = 1 << RADIX_BITS;
 const unsigned int RADIX_MASK = RADIX_SIZE - 1;
 
@@ -36,9 +36,9 @@ template <class T> struct reduction_identity<struct find_result<T>> {
 
 int main(int argc, char *argv[])
 {
-    int N = 1;
-    int L = 100000;
-    int K = 10;
+    int N = 10000;
+    int L = 10000;
+    int K = 300;
 
     Kokkos::ScopeGuard kokkos(argc, argv);
 
@@ -88,7 +88,13 @@ int main(int argc, char *argv[])
                 //           std::setw(8)
                 //           << desired << std::dec << std::endl;
 
-                Kokkos::deep_copy(bins, 0);
+                Kokkos::single(Kokkos::PerTeam(member), [=] {
+                    for (int j = 0; j < RADIX_SIZE; j++) {
+                        bins(j) = 0;
+                    }
+                });
+
+                member.team_barrier();
 
                 Kokkos::parallel_for(
                     Kokkos::TeamThreadRange(member, L), [=](int j) {
@@ -142,24 +148,29 @@ int main(int argc, char *argv[])
                 },
                 Kokkos::Sum<find_result<unsigned int>>(res));
 
-            std::cout << "found kth item=" << res.val << std::endl;
+            // std::cout << "found kth item=" << res.val << std::endl;
 
             Kokkos::parallel_scan(Kokkos::TeamThreadRange(member, L),
                                   [=](int j, int &partial_sum, bool is_final) {
                                       if (data(i, j) <= res.val) {
-                                          partial_sum++;
-                                          if (is_final) {
+                                          if (is_final && partial_sum < K) {
                                               out(i, partial_sum) = data(i, j);
                                           }
+                                          partial_sum++;
                                       }
                                   });
-
-            std::cout << "top-k items=";
-            for (int j = 0; j < K; j++) {
-                std::cout << out(i, j) << ", ";
-            }
-            std::cout << std::endl;
         });
+
+    // const auto out_mirror = Kokkos::create_mirror_view_and_copy(
+    //     Kokkos::DefaultHostExecutionSpace(), out);
+
+    // std::cout << "top-k items=";
+    // for (int i = 0; i < N; i++) {
+    //     for (int j = 0; j < K; j++) {
+    //         std::cout << out_mirror(i, j) << ", ";
+    //     }
+    //     std::cout << std::endl;
+    // }
 
     return 0;
 }
